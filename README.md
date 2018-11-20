@@ -127,8 +127,7 @@ names, and all nullability information. What you're left with still looks kind
 of like GraphQL but lets you focus on higher level of the types and their
 relationships.
 
-``` *Rule #1: Always start with a high-level view of the objects and their
-relationships before you deal with specific fields.* ```
+``` *Rule #1: Always start with a high-level view of the objects and their relationships before you deal with specific fields.* ```
 
 
 ## Step Two: A Clean Slate
@@ -242,8 +241,7 @@ GraphQL.
 
 As much as possible let go of your baggage and start from scratch.
 
-``` *Rule #3: Design your API around the business domain, not the implementation,
-user-interface, or legacy APIs.* ```
+``` *Rule #3: Design your API around the business domain, not the implementation, user-interface, or legacy APIs.* ```
 
 
 ## Step Three: Adding Detail
@@ -486,8 +484,7 @@ obvious what this field is for; it's the body description of the specific
 collection. The first thing we can do to make this API better is just to rename
 it to `description`, which is a much clearer name.
 
-``` *Rule #9: Choose field names based on what makes sense, not based on the
-implementation or what the field is called in legacy APIs.* ```
+``` *Rule #9: Choose field names based on what makes sense, not based on the implementation or what the field is called in legacy APIs.* ```
 
 Next, we can make it non-nullable. As we talked about with the title field, it
 doesn't make sense to distinguish between the field being null and simply being
@@ -509,8 +506,7 @@ custom scalars to see if one of them would be a better fit. If you're adding a
 field and you think a new custom scalar would be appropriate, it's worth talking
 it over with your team to make sure you're capturing the right concept.
 
-``` *Rule #10: Use custom scalar types when you're exposing something with specific
-semantic value.* ```
+``` *Rule #10: Use custom scalar types when you're exposing something with specific semantic value.* ```
 
 ### Pagination Again
 
