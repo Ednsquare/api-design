@@ -576,3 +576,215 @@ enum CollectionRuleRelation {
 ```
 
 ``` *Rule #11: Use enums for fields which can only take a specific set of values.* ```
+
+
+## Step Four: Business Logic
+
+We now have a minimal but well-designed GraphQL API for collections. There is a
+lot of detail to collections that we haven't dealt with - any real
+implementation of this feature would need a lot more fields to deal with things
+like product sort order, publishing, etc. - but as a rule those fields will all
+follow the same design patterns layed out here. However, there are still a few
+things which bear looking at in more detail.
+
+For this section, it is most convenient to start with a motivating use case from
+the hypothetical client of our API. Let us therefore imagine that the client
+developer we have been working with needs to know something very specific:
+whether a given product is a member of a collection or not. Of course this is
+something that the client can already answer with our existing API: we expose
+the complete set of products in a collection, so the client simply has to
+iterate through looking for the product they care about.
+
+This solution has two problems though. The first, obvious problem is that it's
+inefficient; collections can contain millions of products, and having the client
+fetch and iterate through them all would be extremely slow. The second, bigger
+problem, is that it requires the client to write code. This last point is a
+critical piece of design philosophy: the server should always be the single
+source of truth for any business logic. An API almost always exists to serve
+more than one client, and if each of those clients has to implement the same
+logic then you've effectively got code duplication, with all the extra work and
+room for error which that entails.
+
+``` *Rule #12: The API should provide business logic, not just data. Complex calculations should be done on the server, in one place, not on the client, in many places.* ```
+
+Back to our client use-case, the best answer here is to provide a new field
+specifically dedicated to solving this problem. Practically, this looks like:
+```graphql
+type Collection implements Node {
+  # ...
+  hasProduct(id: ID!): Bool!
+}
+```
+This field takes the ID of a product and returns a boolean based on the server
+determining if a product is in the collection or not. The fact that this sort-of
+duplicates the data from the existing `products` field is irrelevant. GraphQL
+returns only what clients explicitly ask for, so unlike REST it does not cost us
+anything to add a bunch of secondary fields. The client doesn't have to write
+any code beyond querying an additional field, and the total bandwidth used is a
+single ID plus a single boolean.
+
+One follow-up warning though: just because we're providing business logic in a
+situation does not mean we don't have to provide the raw data too. Clients
+should be able to do the business logic themselves, if they have to. You can’t
+predict all of the logic a client is going to want, and there isn't always an
+easy channel for clients to ask for additional fields (though you should strive
+to ensure such a channel exists as much as possible).
+
+``` *Rule #13: Provide the raw data too, even when there's business logic around it.* ```
+
+Finally, don't let business-logic fields affect the overall shape of the API.
+The business domain data is still the core model. If you're finding the business
+logic doesn't really fit, then that's a sign that maybe your underlying model
+isn't right.
+
+## Step Five: Mutations
+
+The final missing piece of our GraphQL schema design is the ability to actually
+change values: creating, updating, and deleting collections and related pieces.
+As with the readable portion of the schema we should start with a high-level
+view: in this case, of just the various mutations we will want to implement,
+without worrying about their specific inputs or outputs. Naively we might follow
+the CRUD paradigm and have just `create`, `delete`, and `update` mutations.
+While this is a decent starting place, it is insufficient for a proper GraphQL
+API.
+
+### Separate Logical Actions
+
+The first thing we might notice if we were to stick to just CRUD is that our
+`update` mutation quickly becomes massive, responsible not just for updating
+simple scalar values like title but also for performing complex actions like
+publishing/unpublishing, adding/removing/reordering the products in the
+collection, changing the rules for automatic collections, etc. This makes it
+hard to implement on the server and hard to reason about for the client.
+Instead, we can take advantage of GraphQL to split it apart into more granular,
+logical actions. As a very first pass, we can split out publish/unpublish
+resulting in the following mutation list:
+- create
+- delete
+- update
+- publish
+- unpublish
+
+``` *Rule #14: Write separate mutations for separate logical actions on a resource.* ```
+
+### Manipulating Relationships
+
+The `update` mutation still has far too many responsibilities so it makes sense
+to continue splitting it up, but we will deal with these actions separately
+since they're worth thinking about from another dimension as well: the
+manipulation of object relationships (e.g. one-to-many, many-to-many). We've
+already considered the use of IDs vs embedding, and the use of pagination vs
+arrays in the read API, and there are some similar issues to deal with when
+mutating these relationships.
+
+For the relationship between products and collections, there are a couple of
+styles we could broadly consider:
+- Embedding the entire relationship (e.g. `products: [ProductInput!]!`) into the
+  update mutation is the CRUD-style default, but of course it quickly becomes
+  inefficient when the list is large.
+- Embedding "delta" fields (e.g. `productsToAdd: [ID!]!` and
+  `productsToRemove: [ID!]!`) into the update mutation is more efficient since
+  only the changed IDs need to be specified instead of the entire list, but it
+  still keeps the actions tied together.
+- Splitting it up entirely into separate mutations (`addProduct`,
+  `removeProduct`, etc.) is the most powerful and flexible but also the most
+  work.
+
+The last option is generally the safest call, especially since mutations like
+this will usually be distinct logical actions anyway. However, there are a lot
+of factors to consider:
+- Is the relationship large or paginated? If so, embedding the entire list is
+  definitely impractical, however either delta fields or separate mutations
+  could still work. If the relationship is always small though (especially if
+  it's one-to-one), embedding may be the simplest choice.
+- Is the relationship ordered? The product-collection relationship is ordered,
+  and permits manual reordering. Order is naturally supported by the embedded
+  list or by separate mutations (you can add a `reorderProducts` mutation)
+  but isn't an option for delta fields.
+- Is the relationship mandatory? Products and collections can both exist on
+  their own outside of the relationship, with their own create/delete lifecycle.
+  If the relationship were mandatory (i.e. products must be in a collection)
+  then this would strongly suggest separate mutations because the action would
+  actually be to *create* a product, not just to update the relationship.
+- Do both sides have IDs? The collection-rule relationship is mandatory (rules
+  can't exist without collections) but rules don't even have IDs; they are
+  clearly subservient to their collection, and since the relationship is also
+  small, embedding the list is actually not a bad choice here. Anything else
+  would require rules to be individually identifiable and that feels like
+  overkill.
+
+``` *Rule #15: Mutating relationships is really complicated and not easily  summarized into a snappy rule.* ```
+
+ If you stir all of this together, for collections we end up with the following
+ list of mutations:
+- create
+- delete
+- update
+- publish
+- unpublish
+- addProducts
+- removeProducts
+- reorderProducts
+
+Products we split into their own mutations, because the relationship is large,
+and ordered. Rules we left inline because the relationship is small, and rules
+are sufficiently minor to not have IDs.
+
+Finally, you may note that we have mutations like `addProducts` and not
+`addProduct`. This is simply a convenience for the client, since the common use
+case when manipulating this relationship will be to add, remove, or reorder more
+than one product at a time.
+
+
+``` *Rule #16: When writing separate mutations for relationships, consider whether  it would be useful for the mutations to operate on multiple elements at once.* ```
+
+
+## TLDR: The rules
+
+- Rule #1: Always start with a high-level view of the objects and their relationships before you deal with specific fields.
+
+- Rule #2: Never expose implementation details in your API design.
+
+- Rule #3: Design your API around the business domain, not the implementation, user-interface, or legacy APIs.
+
+- Rule #4: It’s easier to add fields than to remove them.
+
+- Rule #5: Major business-object types should always implement Node.
+
+- Rule #6: Group closely-related fields together into subobjects.
+
+- Rule #7: Always check whether list fields should be paginated or not.
+
+- Rule #8: Always use object references instead of ID fields.
+
+- Rule #9: Choose field names based on what makes sense, not based on the implementation or what the field is called in legacy APIs.
+
+- Rule #10: Use custom scalar types when you’re exposing something with specific semantic value.
+
+- Rule #11: Use enums for fields which can only take a specific set of values.
+
+- Rule #12: The API should provide business logic, not just data. Complex calculations should be done on the server, in one place, not on the client, in many places.
+
+- Rule #13: Provide the raw data too, even when there’s business logic around it.
+
+- Rule #14: Write separate mutations for separate logical actions on a resource.
+
+- Rule #15: Mutating relationships is really complicated and not easily summarized into a snappy rule.
+
+- Rule #16: When writing separate mutations for relationships, consider whether it would be useful for the mutations to operate on multiple elements at once.
+
+- Rule #17: Prefix mutation names with the object they are mutating for
+ alphabetical grouping (e.g. use `orderCancel` instead of `cancelOrder`).
+ 
+- Rule #18: Only make input fields required if they're actually semantically required for the mutation to proceed.
+
+- Rule #19: Use weaker types for inputs (e.g. String instead of Email) when the format is unambiguous and client-side validation is complex. This lets the server run all non-trivial validations at once and return the errors in a single place in a single format, simplifying the client.
+
+- Rule #20: Use stronger types for inputs (e.g. DateTime instead of String) when the format may be ambiguous and client-side validation is simple. This provides clarity and encourages clients to use stricter input controls (e.g. a date-picker widget instead of a free-text field).
+
+- Rule #21: Structure mutation inputs to reduce duplication, even if this requires relaxing requiredness constraints on certain fields.
+
+- Rule #22: Mutations should provide user/business-level errors via a userErrors field on the mutation payload. The top-level query errors entry is reserved for client and server-level errors.
+
+- Rule #23: Most payload fields for a mutation should be nullable, unless there is really a value to return in every possible error case.
+
